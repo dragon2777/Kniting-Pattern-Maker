@@ -77,6 +77,22 @@ textarea {
     height: 20px;
     border: 1px solid #000;
 }
+
+#gridViewport {
+    width: 100%;
+    height: 70vh;
+    border: 1px solid #aaa;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    background: #eaeaea;
+}
+
+#grid {
+    transform-origin: top left;
+}
+
 </style>
 </head>
 
@@ -92,6 +108,11 @@ textarea {
 
     <button id="stitchModeBtn" onclick="setMode('stitch')" class="mode-active">Stitch Mode</button>
     <button id="colorModeBtn" onclick="setMode('color')">Color Mode</button>
+    <br>
+    <button onclick="zoomIn()">Zoom In</button>
+    <button onclick="zoomOut()">Zoom Out</button>
+    <button onclick="resetZoom()">Reset Zoom</button>
+
     <br>
 
     <div id="stitchControls">
@@ -130,7 +151,9 @@ textarea {
 
 </div>
 
-<div id="grid"></div>
+<div id="gridViewport">
+    <div id="grid"></div>
+</div>
 
 <h3>Color Legend</h3>
 <div id="legend"></div>
@@ -141,13 +164,14 @@ textarea {
 let pattern = [];
 let currentMode = "stitch";
 let colorRegistry = {}; 
-// Example:
-// {
-//   "#ff0000": { letter: "A", name: "Red Wool" }
-// }
 
 let isMouseDown = false;
 let undoStack = [];
+
+let zoomLevel = 1;
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 3;
+
 const MAX_UNDO = 100;
 
 // ============================
@@ -729,6 +753,34 @@ function buildEmptyGrid(rows, cols) {
     }
 }
 
+function applyZoom() {
+    const grid = document.getElementById("grid");
+    grid.style.transform = `scale(${zoomLevel})`;
+}
+
+function zoomIn() {
+    zoomLevel = Math.min(MAX_ZOOM, zoomLevel + 0.1);
+    applyZoom();
+}
+
+function zoomOut() {
+    zoomLevel = Math.max(MIN_ZOOM, zoomLevel - 0.1);
+    applyZoom();
+}
+
+function resetZoom() {
+    zoomLevel = 1;
+    applyZoom();
+}
+
+document.getElementById("gridViewport").addEventListener("wheel", function(e) {
+    if (e.ctrlKey) {
+        e.preventDefault();
+        if (e.deltaY < 0) zoomIn();
+        else zoomOut();
+    }
+});
+
 function drawLegend(doc, x, yStart) {
 
     let y = yStart + 10;
@@ -758,8 +810,6 @@ function drawLegend(doc, x, yStart) {
         y += 8;
     });
 }
-
-
 
 function hexToRgb(hex) {
     const clean = hex.replace("#", "");
