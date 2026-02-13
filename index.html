@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Knitting Pattern Maker</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+    padding: 20px;
+    text-align: center;
+}
+
+.controls {
+    margin-bottom: 15px;
+}
+
+input, select, button {
+    padding: 6px;
+    margin: 4px;
+}
+
+#grid {
+    display: inline-grid;
+    gap: 2px;
+    background: #ccc;
+    padding: 5px;
+}
+
+.cell {
+    width: 32px;
+    height: 32px;
+    background: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+    user-select: none;
+    border: 1px solid #eee;
+}
+
+.cell:hover {
+    outline: 2px solid #87ceeb;
+}
+
+textarea {
+    width: 95%;
+    height: 180px;
+    margin-top: 15px;
+}
+
+.mode-active {
+    background: #007bff;
+    color: white;
+}
+#legend {
+    margin-top: 10px;
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+}
+
+.legend-color-box {
+    width: 20px;
+    height: 20px;
+    border: 1px solid #000;
+}
+</style>
+</head>
+
+<body>
+
+<h1>🧶 Knitting Pattern Maker</h1>
+
+<div class="controls">
+    Rows: <input type="number" id="rows" value="12" min="1" max="200">
+    Columns: <input type="number" id="cols" value="12" min="1" max="200">
+    <button onclick="createGrid()">Create Grid</button>
+    <br>
+
+    <button id="stitchModeBtn" onclick="setMode('stitch')" class="mode-active">Stitch Mode</button>
+    <button id="colorModeBtn" onclick="setMode('color')">Color Mode</button>
+    <br>
+
+    <div id="stitchControls">
+        Stitch:
+        <select id="stitchType">
+            <option value="K">K</option>
+            <option value="P">P</option>
+            <option value="YO">YO</option>
+            <option value="SSK">SSK</option>
+            <option value="K2T">K2T</option>
+            <option value="">Clear Stitch</option>
+        </select>
+    </div>
+
+    <div id="colorControls" style="display:none;">
+        Color:
+        <input type="color" id="colorPicker" value="#ff0000">
+        <button onclick="clearSelectedColor()">Clear Color</button>
+    </div>
+
+    <br>
+    <button onclick="exportPattern()">Export Pattern</button>
+    <button onclick="exportPDF()">Export PDF</button>
+</div>
+
+<div id="grid"></div>
+
+<h3>Color Legend</h3>
+<div id="legend"></div>
+
+<textarea id="output" placeholder="Pattern export will appear here..."></textarea>
+
+<script>
+let pattern = [];
+let currentMode = "stitch";
+let colorRegistry = {}; 
+// Example:
+// {
+//   "#ff0000": { letter: "A", name: "Red Wool" }
+// }
+
+let isMouseDown = false;
+let undoStack = [];
+const MAX_UNDO = 100;
+
+// ============================
+// MODE SWITCH
+// ============================
+
+function setMode(mode) {
+    currentMode = mode;
+
+    document.getElementById("stitchControls").style.display =
+        mode === "stitch" ? "block" : "none";
+
+    document.getElementById("colorControls").style.display =
+        mode === "color" ? "block" : "none";
+
+    document.getElementById("stitchModeBtn").classList.toggle("mode-active", mode === "stitch");
+    document.getElementById("colorModeBtn").classList.toggle("mode-active", mode === "color");
+}
+
+// ============================
+// GRID CREATION
+// ============================
+
+function createGrid() {
+    const rows = parseInt(document.getElementById("rows").value);
+    const cols = parseInt(document.getElementById("cols").value);
+    const grid = document.getElementById("grid");
+
+    grid.innerHTML = "";
+    grid.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
+
+    pattern = [];
+    undoStack = [];
+
+    for (let r = 0; r < rows; r++) {
+        pattern[r] = [];
+        for (let c = 0; c < cols; c++) {
+
+            pattern[r][c] = {
+                stitch: "",
+                color: ""
+            };
+
+            const cell = document.createElement("div");
+            cell.classList.add("cell");
+            cell.dataset.row = r;
+            cell.dataset.col = c;
+
+            cell.addEventListener("mousedown", (e) => {
+                isMouseDown = true;
+                saveState(); // save once at drag start
+                paintCell(cell, r, c);
+            });
+
+            cell.addEventListener("mouseenter", () => {
+                if (isMouseDown) {
+                    paintCell(cell, r, c);
+                }
+            });
+
+            grid.appendChild(cell);
+        }
+    }
+    generateLegend();
+}
+
+document.addEventListener("mouseup", () => {
+    isMouseDown = false;
+});
+
+// ============================
+// PAINTING
+// ============================
+
+function paintCell(cell, r, c) {
+
+    if (currentMode === "stitch") {
+        const stitch = document.getElementById("stitchType").value;
+        pattern[r][c].stitch = stitch;
+        cell.textContent = stitch;
+    }
+
+    if (currentMode === "color") {
+        const color = document.getElementById("colorPicker").value;
+        pattern[r][c].color = color;
+        cell.style.backgroundColor = color;
+        cell.style.color = getContrastColor(color);
+    }
+    generateLegend();
+}
+
+// ============================
+// UNDO SYSTEM
+// ============================
+
+function saveState() {
+    const snapshot = JSON.parse(JSON.stringify(pattern));
+    undoStack.push(snapshot);
+
+    if (undoStack.length > MAX_UNDO) {
+        undoStack.shift();
+    }
+}
+
+function undo() {
+    if (undoStack.length === 0) return;
+
+    pattern = undoStack.pop();
+    redrawGrid();
+}
+
+// Ctrl + Z support
+document.addEventListener("keydown", function(e) {
+    if (e.ctrlKey && e.key === "z") {
+        undo();
+    }
+});
+
+// ============================
+// REDRAW
+// ============================
+
+function redrawGrid() {
+    const cells = document.querySelectorAll(".cell");
+
+    cells.forEach(cell => {
+        const r = parseInt(cell.dataset.row);
+        const c = parseInt(cell.dataset.col);
+
+        const data = pattern[r][c];
+
+        cell.textContent = data.stitch || "";
+        cell.style.backgroundColor = data.color || "white";
+        cell.style.color = data.color
+            ? getContrastColor(data.color)
+            : "black";
+    });
+    generateLegend();
+}
+
+// ============================
+// CONTRAST
+// ============================
+
+function getContrastColor(hexColor) {
+
+    const hex = hexColor.replace("#", "");
+
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b);
+
+    return luminance > 150 ? "black" : "white";
+}
+
+// ============================
+// EXPORT
+// ============================
+
+function exportPattern() {
+    const output = document.getElementById("output");
+
+    let textExport = "Knitting Pattern:\n\n";
+
+    for (let r = pattern.length - 1; r >= 0; r--) {
+        textExport += `Row ${r + 1}: `;
+        textExport += pattern[r].map(cell => {
+            let part = "";
+            if (cell.stitch) part += cell.stitch;
+            if (cell.color) {
+                const colors = getColorMap();
+                const entry = colors[cell.color];
+                part += `(${entry.letter})`;
+            }
+            if (!part) part = "-";
+            return part;
+        }).join(" ");
+        textExport += "\n";
+    }
+
+    output.value = textExport + "\n\nJSON:\n" +
+        JSON.stringify(pattern, null, 2);
+        textExport += "\nColor Legend:\n";
+
+    Object.keys(colorRegistry).forEach(color => {
+        const entry = colorRegistry[color];
+        textExport += `${entry.letter}: ${entry.name} (${color})\n`;
+    });
+}
+
+function generateLegend() {
+    const legendContainer = document.getElementById("legend");
+    legendContainer.innerHTML = "";
+
+    const uniqueColors = new Set();
+
+    pattern.forEach(row => {
+        row.forEach(cell => {
+            if (cell.color) uniqueColors.add(cell.color);
+        });
+    });
+
+    const colors = Array.from(uniqueColors);
+
+    colors.forEach((color, index) => {
+
+        // Assign letter if new
+        if (!colorRegistry[color]) {
+            const letter = String.fromCharCode(65 + Object.keys(colorRegistry).length);
+            colorRegistry[color] = {
+                letter: letter,
+                name: `Color ${letter}`
+            };
+        }
+
+        const item = document.createElement("div");
+        item.classList.add("legend-item");
+
+        const box = document.createElement("div");
+        box.classList.add("legend-color-box");
+        box.style.backgroundColor = color;
+
+        const label = document.createElement("span");
+        label.textContent = colorRegistry[color].letter;
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = colorRegistry[color].name;
+        input.style.width = "120px";
+
+        input.addEventListener("input", (e) => {
+            colorRegistry[color].name = e.target.value;
+        });
+
+        item.appendChild(box);
+        item.appendChild(label);
+        item.appendChild(input);
+
+        legendContainer.appendChild(item);
+    });
+}
+
+function getColorMap() {
+    const map = {};
+
+    Object.keys(colorRegistry).forEach(color => {
+        map[color] = colorRegistry[color];
+    });
+
+    return map;
+}
+
+async function exportPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    const cellSize = 8;
+    const startX = 20;
+    const startY = 30;
+
+    const rows = pattern.length;
+    const cols = pattern[0].length;
+
+    // Title
+    doc.setFontSize(16);
+    doc.text("Knitting Pattern", 20, 20);
+
+    // Draw grid
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+
+            const cell = pattern[rows - 1 - r][c]; // flip vertically for knitting view
+
+            const x = startX + c * cellSize;
+            const y = startY + r * cellSize;
+
+            // Draw color fill
+            if (cell.color) {
+                const rgb = hexToRgb(cell.color);
+                doc.setFillColor(rgb.r, rgb.g, rgb.b);
+                doc.rect(x, y, cellSize, cellSize, "F");
+            }
+
+            // Draw border
+            doc.setDrawColor(0);
+            doc.rect(x, y, cellSize, cellSize);
+
+            // Draw stitch text
+            if (cell.stitch) {
+                doc.setFontSize(8);
+
+                if (cell.color) {
+                    const textColor = getContrastColor(cell.color);
+                    if (textColor === "white") {
+                        doc.setTextColor(255, 255, 255);
+                    } else {
+                        doc.setTextColor(0, 0, 0);
+                    }
+                } else {
+                    doc.setTextColor(0, 0, 0);
+                }
+
+                doc.text(
+                    cell.stitch,
+                    x + cellSize / 2,
+                    y + cellSize / 2 + 2,
+                    { align: "center" }
+                );
+            }
+        }
+    }
+
+    // Legend
+    let legendY = startY + rows * cellSize + 15;
+    doc.setFontSize(12);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Color Legend:", 20, legendY);
+    legendY += 8;
+
+    Object.keys(colorRegistry).forEach(color => {
+        const entry = colorRegistry[color];
+
+        const rgb = hexToRgb(color);
+        doc.setFillColor(rgb.r, rgb.g, rgb.b);
+        doc.rect(20, legendY - 5, 6, 6, "F");
+        doc.setDrawColor(0);
+        doc.rect(20, legendY - 5, 6, 6);
+
+        doc.setTextColor(0, 0, 0);
+        doc.text(
+            `${entry.letter}: ${entry.name} (${color})`,
+            30,
+            legendY
+        );
+
+        legendY += 8;
+    });
+
+    doc.save("knitting-pattern.pdf");
+}
+
+function hexToRgb(hex) {
+    const clean = hex.replace("#", "");
+    return {
+        r: parseInt(clean.substring(0, 2), 16),
+        g: parseInt(clean.substring(2, 4), 16),
+        b: parseInt(clean.substring(4, 6), 16)
+    };
+}
+
+createGrid();
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+</body>
+</html>
