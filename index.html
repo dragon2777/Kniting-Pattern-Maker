@@ -115,6 +115,19 @@ textarea {
     <br>
     <button onclick="exportPattern()">Export Pattern</button>
     <button onclick="exportPDF()">Export PDF</button>
+    <button onclick="exportPNG()">Export PNG</button>
+
+    <br><br>
+    Project Name:
+    <input type="text" id="projectName" value="My Pattern">
+
+    <button onclick="saveProjectFile()">Save to File</button>
+    <button onclick="loadProjectFile()">Load from File</button>
+    <button onclick="saveToBrowser()">Save to Browser</button>
+    <button onclick="loadFromBrowser()">Load from Browser</button>
+
+    <input type="file" id="fileLoader" style="display:none" />
+
 </div>
 
 <div id="grid"></div>
@@ -161,45 +174,14 @@ function setMode(mode) {
 function createGrid() {
     const rows = parseInt(document.getElementById("rows").value);
     const cols = parseInt(document.getElementById("cols").value);
-    const grid = document.getElementById("grid");
 
-    grid.innerHTML = "";
-    grid.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
-
-    pattern = [];
     undoStack = [];
+    colorRegistry = {};
 
-    for (let r = 0; r < rows; r++) {
-        pattern[r] = [];
-        for (let c = 0; c < cols; c++) {
-
-            pattern[r][c] = {
-                stitch: "",
-                color: ""
-            };
-
-            const cell = document.createElement("div");
-            cell.classList.add("cell");
-            cell.dataset.row = r;
-            cell.dataset.col = c;
-
-            cell.addEventListener("mousedown", (e) => {
-                isMouseDown = true;
-                saveState(); // save once at drag start
-                paintCell(cell, r, c);
-            });
-
-            cell.addEventListener("mouseenter", () => {
-                if (isMouseDown) {
-                    paintCell(cell, r, c);
-                }
-            });
-
-            grid.appendChild(cell);
-        }
-    }
+    buildEmptyGrid(rows, cols);
     generateLegend();
 }
+
 
 document.addEventListener("mouseup", () => {
     isMouseDown = false;
@@ -391,92 +373,393 @@ function getColorMap() {
 
 async function exportPDF() {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-
-    const cellSize = 8;
-    const startX = 20;
-    const startY = 30;
 
     const rows = pattern.length;
     const cols = pattern[0].length;
 
-    // Title
-    doc.setFontSize(16);
-    doc.text("Knitting Pattern", 20, 20);
+    const margin = 20;
 
-    // Draw grid
+    // ===============================
+    // PAGE 1 – SCALED OVERVIEW
+    // ===============================
+
+    const overviewDoc = new jsPDF();
+    const pageWidth = overviewDoc.internal.pageSize.getWidth();
+    const pageHeight = overviewDoc.internal.pageSize.getHeight();
+
+    const usableWidth = pageWidth - margin * 2;
+    const usableHeight = pageHeight - margin * 3;
+
+    const cellSizeOverview = Math.floor(
+        Math.min(usableWidth / cols, usableHeight / rows)
+    );
+
+    overviewDoc.setFontSize(16);
+    overviewDoc.text("Knitting Pattern – Overview", margin, margin);
+
+    drawChart(
+        overviewDoc,
+        cellSizeOverview,
+        margin,
+        margin + 10,
+        rows,
+        cols,
+        true
+    );
+
+    drawLegend(overviewDoc, margin, margin + 20 + rows * cellSizeOverview);
+
+    // ===============================
+    // TILE PAGES – FULL RESOLUTION
+    // ===============================
+
+    const tileCellSize = 15; // fixed readable working size
+    const tileDoc = overviewDoc;
+
+    const tilePageWidth = tileDoc.internal.pageSize.getWidth();
+    const tilePageHeight = tileDoc.internal.pageSize.getHeight();
+
+    const maxColsPerPage = Math.floor((tilePageWidth - margin * 2) / tileCellSize);
+    const maxRowsPerPage = Math.floor((tilePageHeight - margin * 2) / tileCellSize);
+
+    for (let rowStart = 0; rowStart < rows; rowStart += maxRowsPerPage) {
+        for (let colStart = 0; colStart < cols; colStart += maxColsPerPage) {
+
+            tileDoc.addPage();
+
+            const rowEnd = Math.min(rowStart + maxRowsPerPage, rows);
+            const colEnd = Math.min(colStart + maxColsPerPage, cols);
+
+            tileDoc.setFontSize(14);
+            tileDoc.text(
+                `Rows ${rows - rowEnd + 1}–${rows - rowStart} | Cols ${colStart + 1}–${colEnd}`,
+                margin,
+                margin - 5
+            );
+
+            drawChartTile(
+                tileDoc,
+                tileCellSize,
+                margin,
+                margin,
+                rowStart,
+                rowEnd,
+                colStart,
+                colEnd
+            );
+        }
+    }
+
+    tileDoc.save("knitting-pattern.pdf");
+}
+
+function drawChartTile(doc, cellSize, startX, startY, rowStart, rowEnd, colStart, colEnd) {
+
+    for (let r = rowStart; r < rowEnd; r++) {
+        for (let c = colStart; c < colEnd; c++) {
+
+            const visualRow = pattern.length - 1 - r;
+
+            const cell = pattern[visualRow][c];
+
+            const x = startX + (c - colStart) * cellSize;
+            const y = startY + (r - rowStart) * cellSize;
+
+            drawSingleCell(doc, cell, x, y, cellSize);
+        }
+    }
+}
+
+function drawSingleCell(doc, cell, x, y, size) {
+
+    if (cell.color) {
+        const rgb = hexToRgb(cell.color);
+        doc.setFillColor(rgb.r, rgb.g, rgb.b);
+        doc.rect(x, y, size, size, "F");
+    }
+
+    doc.setDrawColor(0);
+    doc.rect(x, y, size, size);
+
+    if (cell.stitch) {
+        doc.setFontSize(size * 0.6);
+
+        if (cell.color) {
+            const textColor = getContrastColor(cell.color);
+            doc.setTextColor(textColor === "white" ? 255 : 0);
+        } else {
+            doc.setTextColor(0);
+        }
+
+        doc.text(
+            cell.stitch,
+            x + size / 2,
+            y + size / 2 + size * 0.25,
+            { align: "center" }
+        );
+    }
+}
+
+function exportPNG() {
+
+    const rows = pattern.length;
+    const cols = pattern[0].length;
+
+    const scale = 40; // pixel size per cell (adjust for resolution)
+    const padding = 50;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    canvas.width = cols * scale + padding * 2;
+    canvas.height = rows * scale + padding * 2 + 120; // extra space for legend
+
+    // Background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Title
+    ctx.fillStyle = "#000";
+    ctx.font = "24px Arial";
+    ctx.fillText("Knitting Pattern", padding, 35);
+
+    // Draw chart
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
 
-            const cell = pattern[rows - 1 - r][c]; // flip vertically for knitting view
+            const cell = pattern[rows - 1 - r][c];
 
-            const x = startX + c * cellSize;
-            const y = startY + r * cellSize;
+            const x = padding + c * scale;
+            const y = padding + r * scale;
 
-            // Draw color fill
+            // Fill color
             if (cell.color) {
-                const rgb = hexToRgb(cell.color);
-                doc.setFillColor(rgb.r, rgb.g, rgb.b);
-                doc.rect(x, y, cellSize, cellSize, "F");
+                ctx.fillStyle = cell.color;
+                ctx.fillRect(x, y, scale, scale);
             }
 
-            // Draw border
-            doc.setDrawColor(0);
-            doc.rect(x, y, cellSize, cellSize);
+            // Border
+            ctx.strokeStyle = "#000";
+            ctx.strokeRect(x, y, scale, scale);
 
-            // Draw stitch text
+            // Stitch text
             if (cell.stitch) {
-                doc.setFontSize(8);
 
                 if (cell.color) {
-                    const textColor = getContrastColor(cell.color);
-                    if (textColor === "white") {
-                        doc.setTextColor(255, 255, 255);
-                    } else {
-                        doc.setTextColor(0, 0, 0);
-                    }
+                    ctx.fillStyle = getContrastColor(cell.color);
                 } else {
-                    doc.setTextColor(0, 0, 0);
+                    ctx.fillStyle = "#000";
                 }
 
-                doc.text(
+                ctx.font = `${scale * 0.5}px Arial`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+
+                ctx.fillText(
                     cell.stitch,
-                    x + cellSize / 2,
-                    y + cellSize / 2 + 2,
-                    { align: "center" }
+                    x + scale / 2,
+                    y + scale / 2
                 );
             }
         }
     }
 
-    // Legend
-    let legendY = startY + rows * cellSize + 15;
-    doc.setFontSize(12);
-    doc.setTextColor(0, 0, 0);
-    doc.text("Color Legend:", 20, legendY);
-    legendY += 8;
+    // Draw Legend
+    let legendY = padding + rows * scale + 40;
+
+    ctx.fillStyle = "#000";
+    ctx.font = "18px Arial";
+    ctx.fillText("Color Legend:", padding, legendY);
+
+    legendY += 25;
 
     Object.keys(colorRegistry).forEach(color => {
+
         const entry = colorRegistry[color];
 
-        const rgb = hexToRgb(color);
-        doc.setFillColor(rgb.r, rgb.g, rgb.b);
-        doc.rect(20, legendY - 5, 6, 6, "F");
-        doc.setDrawColor(0);
-        doc.rect(20, legendY - 5, 6, 6);
+        // Color box
+        ctx.fillStyle = color;
+        ctx.fillRect(padding, legendY - 15, 20, 20);
 
-        doc.setTextColor(0, 0, 0);
-        doc.text(
+        ctx.strokeStyle = "#000";
+        ctx.strokeRect(padding, legendY - 15, 20, 20);
+
+        // Text
+        ctx.fillStyle = "#000";
+        ctx.font = "16px Arial";
+        ctx.fillText(
             `${entry.letter}: ${entry.name} (${color})`,
-            30,
+            padding + 35,
             legendY
         );
 
-        legendY += 8;
+        legendY += 30;
     });
 
-    doc.save("knitting-pattern.pdf");
+    // Download PNG
+    const link = document.createElement("a");
+    link.download = "knitting-pattern.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
 }
+
+function saveProjectFile() {
+
+    const project = {
+        name: document.getElementById("projectName").value,
+        rows: pattern.length,
+        cols: pattern[0].length,
+        pattern: pattern,
+        colorRegistry: colorRegistry
+    };
+
+    const blob = new Blob(
+        [JSON.stringify(project, null, 2)],
+        { type: "application/json" }
+    );
+
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = project.name.replace(/\s+/g, "_") + ".knitjson";
+    link.click();
+}
+
+function loadProjectFile() {
+    document.getElementById("fileLoader").click();
+}
+
+document.getElementById("fileLoader").addEventListener("change", function(event) {
+
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const project = JSON.parse(e.target.result);
+        restoreProject(project);
+    };
+
+    reader.readAsText(file);
+});
+
+function saveToBrowser() {
+
+    const project = {
+        name: document.getElementById("projectName").value,
+        rows: pattern.length,
+        cols: pattern[0].length,
+        pattern: pattern,
+        colorRegistry: colorRegistry
+    };
+
+    localStorage.setItem("knittingProject", JSON.stringify(project));
+
+    alert("Project saved to browser.");
+}
+
+function loadFromBrowser() {
+
+    const data = localStorage.getItem("knittingProject");
+
+    if (!data) {
+        alert("No saved project found.");
+        return;
+    }
+
+    const project = JSON.parse(data);
+    restoreProject(project);
+}
+
+function restoreProject(project) {
+
+    // Set UI fields first
+    document.getElementById("projectName").value = project.name;
+    document.getElementById("rows").value = project.rows;
+    document.getElementById("cols").value = project.cols;
+
+    // Reset undo stack
+    undoStack = [];
+
+    // Rebuild empty grid structure
+    buildEmptyGrid(project.rows, project.cols);
+
+    // Inject saved data
+    pattern = project.pattern;
+    colorRegistry = project.colorRegistry || {};
+
+    // Redraw everything
+    redrawGrid();
+    generateLegend();
+}
+
+function buildEmptyGrid(rows, cols) {
+
+    const grid = document.getElementById("grid");
+    grid.innerHTML = "";
+    grid.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
+
+    pattern = [];
+
+    for (let r = 0; r < rows; r++) {
+        pattern[r] = [];
+        for (let c = 0; c < cols; c++) {
+
+            pattern[r][c] = { stitch: "", color: "" };
+
+            const cell = document.createElement("div");
+            cell.classList.add("cell");
+            cell.dataset.row = r;
+            cell.dataset.col = c;
+
+            cell.addEventListener("mousedown", (e) => {
+                isMouseDown = true;
+                saveState();
+                paintCell(cell, r, c);
+            });
+
+            cell.addEventListener("mouseenter", () => {
+                if (isMouseDown) {
+                    paintCell(cell, r, c);
+                }
+            });
+
+            grid.appendChild(cell);
+        }
+    }
+}
+
+function drawLegend(doc, x, yStart) {
+
+    let y = yStart + 10;
+
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text("Color Legend:", x, y);
+
+    y += 8;
+
+    Object.keys(colorRegistry).forEach(color => {
+
+        const entry = colorRegistry[color];
+        const rgb = hexToRgb(color);
+
+        doc.setFillColor(rgb.r, rgb.g, rgb.b);
+        doc.rect(x, y - 5, 6, 6, "F");
+        doc.setDrawColor(0);
+        doc.rect(x, y - 5, 6, 6);
+
+        doc.text(
+            `${entry.letter}: ${entry.name} (${color})`,
+            x + 12,
+            y
+        );
+
+        y += 8;
+    });
+}
+
+
 
 function hexToRgb(hex) {
     const clean = hex.replace("#", "");
@@ -485,6 +768,21 @@ function hexToRgb(hex) {
         g: parseInt(clean.substring(2, 4), 16),
         b: parseInt(clean.substring(4, 6), 16)
     };
+}
+
+function drawChart(doc, cellSize, startX, startY, rows, cols) {
+
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+
+            const cell = pattern[rows - 1 - r][c];
+
+            const x = startX + c * cellSize;
+            const y = startY + r * cellSize;
+
+            drawSingleCell(doc, cell, x, y, cellSize);
+        }
+    }
 }
 
 createGrid();
