@@ -89,10 +89,6 @@ textarea {
     background: #eaeaea;
 }
 
-#grid {
-    transform-origin: top left;
-}
-
 </style>
 </head>
 
@@ -168,9 +164,12 @@ let colorRegistry = {};
 let isMouseDown = false;
 let undoStack = [];
 
+let baseCellSize = 32;
 let zoomLevel = 1;
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 3;
+
+
 
 const MAX_UNDO = 100;
 
@@ -204,6 +203,8 @@ function createGrid() {
 
     buildEmptyGrid(rows, cols);
     generateLegend();
+    updateGridSizing(cols);
+    applyZoom();
 }
 
 
@@ -715,13 +716,14 @@ function restoreProject(project) {
     // Redraw everything
     redrawGrid();
     generateLegend();
+    applyZoom();
 }
 
 function buildEmptyGrid(rows, cols) {
 
     const grid = document.getElementById("grid");
     grid.innerHTML = "";
-    grid.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
+    updateGridSizing(cols);
 
     pattern = [];
 
@@ -753,9 +755,21 @@ function buildEmptyGrid(rows, cols) {
     }
 }
 
-function applyZoom() {
+function updateGridSizing(cols) {
+
     const grid = document.getElementById("grid");
-    grid.style.transform = `scale(${zoomLevel})`;
+
+    const cellSize = baseCellSize * zoomLevel;
+
+    grid.style.gridTemplateColumns = `repeat(${cols}, ${cellSize}px)`;
+
+    const cells = document.querySelectorAll(".cell");
+
+    cells.forEach(cell => {
+        cell.style.width = `${cellSize}px`;
+        cell.style.height = `${cellSize}px`;
+        cell.style.fontSize = `${cellSize * 0.4}px`;
+    });
 }
 
 function zoomIn() {
@@ -772,6 +786,12 @@ function resetZoom() {
     zoomLevel = 1;
     applyZoom();
 }
+
+function applyZoom() {
+    const cols = pattern[0].length;
+    updateGridSizing(cols);
+}
+
 
 document.getElementById("gridViewport").addEventListener("wheel", function(e) {
     if (e.ctrlKey) {
