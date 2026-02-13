@@ -108,6 +108,7 @@ textarea {
     <button onclick="zoomIn()">Zoom In</button>
     <button onclick="zoomOut()">Zoom Out</button>
     <button onclick="resetZoom()">Reset Zoom</button>
+    <button onclick="fitToScreen()">Fit to Screen</button>
 
     <br>
 
@@ -204,7 +205,7 @@ function createGrid() {
     buildEmptyGrid(rows, cols);
     generateLegend();
     updateGridSizing(cols);
-    applyZoom();
+    fitToScreen();
 }
 
 
@@ -716,7 +717,7 @@ function restoreProject(project) {
     // Redraw everything
     redrawGrid();
     generateLegend();
-    applyZoom();
+    fitToScreen();
 }
 
 function buildEmptyGrid(rows, cols) {
@@ -790,6 +791,30 @@ function resetZoom() {
 function applyZoom() {
     const cols = pattern[0].length;
     updateGridSizing(cols);
+}
+
+window.addEventListener("resize", function() {
+    fitToScreen();
+});
+
+function fitToScreen() {
+
+    const viewport = document.getElementById("gridViewport");
+    const rows = pattern.length;
+    const cols = pattern[0].length;
+
+    const availableWidth = viewport.clientWidth - 20;
+    const availableHeight = viewport.clientHeight - 20;
+
+    const widthBasedZoom = availableWidth / (cols * baseCellSize);
+    const heightBasedZoom = availableHeight / (rows * baseCellSize);
+
+    zoomLevel = Math.min(widthBasedZoom, heightBasedZoom);
+
+    // Clamp to allowed range
+    zoomLevel = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoomLevel));
+
+    applyZoom();
 }
 
 
